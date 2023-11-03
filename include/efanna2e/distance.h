@@ -223,7 +223,7 @@ namespace efanna2e{
 #endif
 #endif
 #endif
-      return result;
+      return -result;
     }
 
   };

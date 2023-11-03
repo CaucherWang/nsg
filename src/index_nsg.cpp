@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <boost/dynamic_bitset.hpp>
+#include<set>
 
 #include "efanna2e/exceptions.h"
 #include "efanna2e/parameters.h"
@@ -452,6 +453,7 @@ void IndexNSG::Search(const float *query, const float *x, size_t K,
     unsigned id = init_ids[i];
     float dist =
         distance_->compare(data_ + dimension_ * id, query, (unsigned)dimension_);
+    NDC++;
     retset[i] = Neighbor(id, dist, true);
     // flags[id] = true;
   }
@@ -471,6 +473,7 @@ void IndexNSG::Search(const float *query, const float *x, size_t K,
         flags[id] = 1;
         float dist =
             distance_->compare(query, data_ + dimension_ * id, (unsigned)dimension_);
+        NDC++;
         if (dist >= retset[L - 1].distance) continue;
         Neighbor nn(id, dist, true);
         int r = InsertIntoPool(retset.data(), L, nn);
@@ -666,6 +669,7 @@ void IndexNSG::findroot(boost::dynamic_bitset<> &flag, unsigned &root,
   }
   final_graph_[root].push_back(id);
 }
+
 void IndexNSG::tree_grow(const Parameters &parameter) {
   unsigned root = ep_;
   boost::dynamic_bitset<> flags{nd_, 0};
@@ -683,4 +687,29 @@ void IndexNSG::tree_grow(const Parameters &parameter) {
     }
   }
 }
+
+
+float IndexNSG::eval_recall(std::vector<std::vector<unsigned> > query_res, std::vector<std::vector<int> > gts, int K){
+  float mean_recall=0;
+  for(unsigned i=0; i<query_res.size(); i++){
+    assert(query_res[i].size() <= gts[i].size());
+    
+    float recall = 0;
+    std::set<unsigned> cur_query_res_set(query_res[i].begin(), query_res[i].end());
+    std::set<int> cur_query_gt(gts[i].begin(), gts[i].begin()+K);
+    
+    for (std::set<unsigned>::iterator x = cur_query_res_set.begin(); x != cur_query_res_set.end(); x++) { 
+      std::set<int>::iterator iter = cur_query_gt.find(*x);
+      if (iter != cur_query_gt.end()) {
+        recall++;
+      }
+    }
+    recall = recall / query_res[i].size();
+    mean_recall += recall;
+  }
+  mean_recall = (mean_recall / query_res.size());
+
+  return mean_recall;
+}
+
 }

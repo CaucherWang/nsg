@@ -35,8 +35,11 @@ int main(int argc, char** argv) {
   float* data_load = NULL;
   unsigned points_num, dim;
   load_data(argv[1], data_load, points_num, dim);
+  std::cout << "data: " << argv[1] << ", points_num: " << points_num
+            << ", dim: " << dim << std::endl;
 
   std::string nn_graph_path(argv[2]);
+  std::cout << "nn_graph_path: " << nn_graph_path << std::endl;
   unsigned L = (unsigned)atoi(argv[3]);
   unsigned R = (unsigned)atoi(argv[4]);
   unsigned C = (unsigned)atoi(argv[5]);
@@ -58,6 +61,7 @@ int main(int argc, char** argv) {
 
   std::cout << "indexing time: " << diff.count() << "\n";
   index.Save(argv[6]);
+  std::cout << "save graph to: " << argv[6] << std::endl;
 
   return 0;
 }

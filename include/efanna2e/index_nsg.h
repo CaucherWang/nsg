@@ -17,13 +17,14 @@ namespace efanna2e {
 class IndexNSG : public Index {
  public:
   explicit IndexNSG(const size_t dimension, const size_t n, Metric m, Index *initializer);
-
+    double NDC;
+    int hops;
 
   virtual ~IndexNSG();
 
   virtual void Save(const char *filename)override;
   virtual void Load(const char *filename)override;
-
+  float eval_recall(std::vector<std::vector<unsigned> > query_res, std::vector<std::vector<int> > gts, int K);
 
   virtual void Build(size_t n, const float *data, const Parameters &parameters) override;
 

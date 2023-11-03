@@ -28,6 +28,43 @@ void load_data(char* filename, float*& data, unsigned& num,
   in.close();
 }
 
+std::vector<std::vector<int> > load_ground_truth(const char* filename) {
+  std::ifstream in(filename, std::ios::binary);
+  if (!in.is_open()) {
+    std::cout << "open file error (in load_ground_truth)" << std::endl;
+    exit(-1);
+  }
+
+  unsigned dim, num;
+
+  in.read((char*)&dim, 4);
+  std::cout << "data dimension: " << dim << std::endl;
+  in.seekg(0, std::ios::end);
+  std::ios::pos_type ss = in.tellg();
+  size_t fsize = (size_t)ss;
+  num = (unsigned)(fsize / (dim + 1) / 4);
+
+  int* data = new int[num * dim * sizeof(int)];
+
+  in.seekg(0, std::ios::beg);
+  for (size_t i = 0; i < num; i++) {
+    in.seekg(4, std::ios::cur);
+    in.read((char*)(data + i * dim), dim * 4);
+  }
+  in.close();
+
+  std::vector<std::vector<int> > res;
+  for (int i = 0; i < num; i++) {
+    std::vector<int> a;
+    for (int j = i*dim; j < (i+1)*dim; j++) {
+      a.push_back(data[j]);
+    }
+    res.push_back(a);
+  }
+
+  return res;
+}
+
 void save_result(char* filename, std::vector<std::vector<unsigned> >& results) {
   std::ofstream out(filename, std::ios::binary | std::ios::out);
 
@@ -38,6 +75,8 @@ void save_result(char* filename, std::vector<std::vector<unsigned> >& results) {
   }
   out.close();
 }
+
+
 int main(int argc, char** argv) {
   if (argc != 7) {
     std::cout << argv[0]
@@ -61,6 +100,10 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
+  std::string gtFileName = argv[6];
+  std::vector<std::vector<int> > gts = load_ground_truth(gtFileName.c_str());
+
+
   // data_load = efanna2e::data_align(data_load, points_num, dim);//one must
   // align the data before build query_load = efanna2e::data_align(query_load,
   // query_num, query_dim);
@@ -70,6 +113,10 @@ int main(int argc, char** argv) {
   efanna2e::Parameters paras;
   paras.Set<unsigned>("L_search", L);
   paras.Set<unsigned>("P_search", L);
+
+  index.NDC = 0;
+  index.hops = 0;
+
 
   auto s = std::chrono::high_resolution_clock::now();
   std::vector<std::vector<unsigned> > res;
@@ -82,7 +129,12 @@ int main(int argc, char** argv) {
   std::chrono::duration<double> diff = e - s;
   std::cout << "search time: " << diff.count() << "\n";
 
-  save_result(argv[6], res);
+  float recall = index.eval_recall(res, gts, K);
+  std::cout << "recall " << recall << std::endl;
+
+
+  std::cout <<"NDC = " << (double)index.NDC / query_num << std::endl;
+  std::cout <<"nhops = " << (double)index.hops / query_num << std::endl;
 
   return 0;
 }
