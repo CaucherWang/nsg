@@ -50,7 +50,15 @@ class Index {
   bool has_built;
   Distance* distance_;
 };
-
 }
+
+class Measure{
+  public:
+    int ndc = 0;
+
+    void clear(){
+        ndc = 0;
+    }
+};
 
 #endif //EFANNA2E_INDEX_H

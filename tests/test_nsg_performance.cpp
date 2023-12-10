@@ -5,6 +5,7 @@
 #include <efanna2e/index_nsg.h>
 #include <efanna2e/util.h>
 #include<iostream>
+#include<algorithm>
 #include<set>
 
 void load_data(char* filename, float*& data, unsigned& num,
@@ -37,28 +38,31 @@ std::vector<std::vector<int> > load_ground_truth(const char* filename) {
     exit(-1);
   }
 
-  unsigned dim, num;
+  unsigned dim, num, real_dim;
 
   in.read((char*)&dim, 4);
   std::cout << "data dimension: " << dim << std::endl;
+  real_dim = std::max(dim, 100u);
+  std::cout << "read dimension: " << real_dim << std::endl;
+  assert(dim >= real_dim);
   in.seekg(0, std::ios::end);
   std::ios::pos_type ss = in.tellg();
   size_t fsize = (size_t)ss;
   num = (unsigned)(fsize / (dim + 1) / 4);
 
-  int* data = new int[num * dim * sizeof(int)];
+  int* data = new int[num * real_dim * sizeof(int)];
 
   in.seekg(0, std::ios::beg);
   for (size_t i = 0; i < num; i++) {
     in.seekg(4, std::ios::cur);
-    in.read((char*)(data + i * dim), dim * 4);
+    in.read((char*)(data + i * dim), real_dim * 4);
   }
   in.close();
 
   std::vector<std::vector<int> > res;
   for (int i = 0; i < num; i++) {
     std::vector<int> a;
-    for (int j = i*dim; j < (i+1)*dim; j++) {
+    for (int j = i*dim; j < (i)*dim + real_dim; j++) {
       a.push_back(data[j]);
     //   std::cout << data[j] << ",";
     }
@@ -97,72 +101,72 @@ int recall(std::vector<unsigned> & query_res, std::vector<int> & gts, int K){
 
 static void test_performance(float* data_load, float* query_load, size_t vecsize, size_t qsize, efanna2e::IndexNSG& appr_alg, size_t vecdim,
                std::vector<std::vector<int> > &gts, size_t k, efanna2e::Parameters& paras) {
-    double target_recall = 0.96;
-    double epsion = 0.02;
-    int lowk = ceil(k * (target_recall - epsion)), highk = floor(k * (target_recall + epsion));
-    int lowef = k, highef, curef, tmp, bound = 4000;
-    long success = -1;
+    double target_recall = 0.86;
+    int lowk = ceil(k * (target_recall));
+    std::vector<int>ret(qsize, 0);
 
+
+    int index = 0;
+#pragma omp parallel for
     for(int i = 0; i < qsize; ++i){
         bool flag = false;
-        // if(i != 2122)
-        //     continue;
-        if(i % 500 == 0)
-            std::cerr << i << std::endl;
-        for(int _ = 0; _ < 3 && !flag; ++_){
+        // if(i != 2504)
+            // continue;
+        #pragma omp critical
+        {
+            if(++index % 100 == 0)
+                std::cerr << index << " / " << qsize << std::endl;
+        }
+
+        int lowef = k, highef, curef, tmp, bound = 40000;
+        long success = -1;
+        Measure measure;
+
+
+        for(int _ = 0; _ < 1 && !flag; ++_){
             lowef = k; highef = bound;
             success = -1;
             while(lowef < highef){
                 curef = (lowef + highef) / 2;
-                  paras.Set<unsigned>("L_search", curef);
-                  paras.Set<unsigned>("P_search", curef);
 
-                appr_alg.NDC = 0;
+                measure.clear();
 
                 std::vector<unsigned> answer(k);
-                appr_alg.Search(query_load + i * vecdim, data_load, k, paras, answer.data());
+                appr_alg.searchmeasure(query_load + i * vecdim, data_load, k, curef, answer, measure);
 
                 tmp = recall(answer, gts[i], k);
                 if(tmp < lowk){
                     lowef = curef+1;
-                }else if(tmp >= lowk){
-                    success = appr_alg.NDC;
+                }else{
+                    success = measure.ndc;
                     if(highef == curef)
                         break;
                     highef = curef;
-                }else{
-                    flag = true;
-                    std::cout << curef << ":";
-                    std::cout << appr_alg.NDC << ",";
-                    break;
                 }
             }
             if(success >= 0){
-                std::cout << success << ",";
+                ret[i] = success;
                 flag = true;
-            }
-            else if(tmp >= lowk){
-                std::cout << appr_alg.NDC << ",";
+            } else if (tmp > lowk){
+                ret[i] = measure.ndc;
                 flag = true;
             }
             else if(tmp < lowk){
-                long large_NDC = appr_alg.NDC;
+                // long large_NDC = measure.ndc;
                 curef = highef;
-                appr_alg.NDC = 0;
-                paras.Set<unsigned>("L_search", curef);
-                  paras.Set<unsigned>("P_search", curef);
+                measure.clear();
 
 
                 std::vector<unsigned> answer(k);
-                appr_alg.Search(query_load + i * vecdim, data_load, k, paras, answer.data());
+                appr_alg.SearchMeasure(query_load + i * vecdim, data_load, k, curef, answer, measure);
 
                 tmp = recall(answer, gts[i], k);
                 if(tmp >= lowk){
-                    std::cout << appr_alg.NDC << ",";
+                    ret[i] = measure.ndc;
                     flag = true;
                 }else if(curef >= bound){
                     std::cerr << i << std::endl;
-                    std::cout << appr_alg.NDC << ",";
+                    ret[i] = measure.ndc;
                     flag = true;
                 }
             }
@@ -173,6 +177,9 @@ static void test_performance(float* data_load, float* query_load, size_t vecsize
         }
     }
 
+    for(int i = 0; i < qsize; ++i){
+        std::cout << ret[i] << ",";
+    }
     std::cout << std::endl;
 }
 
@@ -210,8 +217,8 @@ int main(int argc, char** argv) {
   // align the data before build query_load = efanna2e::data_align(query_load,
   // query_num, query_dim);
   efanna2e::IndexNSG index(dim, points_num, efanna2e::L2, nullptr);
-  index.Load(argv[3]);
   std::cout << "L2 distance, index path: " << argv[3] << std::endl;
+  index.Load(argv[3]);
 
   efanna2e::Parameters paras;
 
@@ -219,7 +226,7 @@ int main(int argc, char** argv) {
   std::cout << "result path: "<< logFileName << std::endl;
   freopen(logFileName.c_str(), "a", stdout);
 
-    test_performance(data_load, query_load, points_num, query_num, index, dim, gts, K, paras);
+  test_performance(data_load, query_load, points_num, query_num, index, dim, gts, K, paras);
 
   return 0;
 }

@@ -34,6 +34,12 @@ class IndexNSG : public Index {
       size_t k,
       const Parameters &parameters,
       unsigned *indices) override;
+
+  void SearchMeasure(const float *query, const float *x, size_t K,
+                      unsigned L, std::vector<unsigned>&indices, Measure &measure);
+
+  void searchmeasure(const float *query, const float *x, size_t K, size_t ef, std::vector<unsigned>&indices,Measure& measure) const ;
+                      
   void SearchWithOptGraph(
       const float *query,
       size_t K,
@@ -66,6 +72,7 @@ class IndexNSG : public Index {
     void sync_prune(unsigned q, std::vector<Neighbor>& pool, const Parameters &parameter, boost::dynamic_bitset<>& flags, SimpleNeighbor* cut_graph_);
     void Link(const Parameters &parameters, SimpleNeighbor* cut_graph_);
     void Load_nn_graph(const char *filename);
+    void Load_nn_graph(const char *filename, int dim);
     void tree_grow(const Parameters &parameter);
     void DFS(boost::dynamic_bitset<> &flag, unsigned root, unsigned &cnt);
     void findroot(boost::dynamic_bitset<> &flag, unsigned &root, const Parameters &parameter);

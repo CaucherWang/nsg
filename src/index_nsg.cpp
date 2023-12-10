@@ -9,8 +9,10 @@
 
 #include "efanna2e/exceptions.h"
 #include "efanna2e/parameters.h"
+#include<queue>
+#include<algorithm>
 
-namespace efanna2e {
+namespace efanna2e {                  
 #define _CONTROL_NUM 100
 IndexNSG::IndexNSG(const size_t dimension, const size_t n, Metric m,
                    Index *initializer)
@@ -71,6 +73,34 @@ void IndexNSG::Load_nn_graph(const char *filename) {
   }
   in.close();
 }
+
+void IndexNSG::Load_nn_graph(const char *filename, int dim) {
+  std::ifstream in(filename, std::ios::binary);
+  unsigned k;
+  in.read((char *)&k, sizeof(unsigned));
+  in.seekg(0, std::ios::end);
+  assert(k >= dim);
+  
+  std::ios::pos_type ss = in.tellg();
+  size_t fsize = (size_t)ss;
+  size_t num = (unsigned)(fsize / (k + 1) / 4);
+  in.seekg(0, std::ios::beg);
+
+  final_graph_.resize(num);
+  final_graph_.reserve(num);
+  unsigned tmp[(k-dim)];
+  unsigned kk = (k + 3) / 4 * 4;
+  for (size_t i = 0; i < num; i++) {
+    in.seekg(4, std::ios::cur);
+    final_graph_[i].resize(dim);
+    final_graph_[i].reserve(kk);
+    in.read((char *)final_graph_[i].data(), dim * sizeof(unsigned));
+
+    in.read((char *)tmp, (k-dim) * sizeof(unsigned));
+  }
+  in.close();
+}
+
 
 void IndexNSG::get_neighbors(const float *query, const Parameters &parameter,
                              std::vector<Neighbor> &retset,
@@ -389,12 +419,17 @@ void IndexNSG::Link(const Parameters &parameters, SimpleNeighbor *cut_graph_) {
 void IndexNSG::Build(size_t n, const float *data, const Parameters &parameters) {
   std::string nn_graph_path = parameters.Get<std::string>("nn_graph_path");
   unsigned range = parameters.Get<unsigned>("R");
-  Load_nn_graph(nn_graph_path.c_str());
+  Load_nn_graph(nn_graph_path.c_str(), 200);
   data_ = data;
   init_graph(parameters);
   SimpleNeighbor *cut_graph_ = new SimpleNeighbor[nd_ * (size_t)range];
+
+  std::cerr << "Start adding links" << std::endl;
+
   Link(parameters, cut_graph_);
   final_graph_.resize(nd_);
+
+  std::cerr << " Start copying graph" << std::endl;
 
   for (size_t i = 0; i < nd_; i++) {
     SimpleNeighbor *pool = cut_graph_ + i * (size_t)range;
@@ -410,6 +445,8 @@ void IndexNSG::Build(size_t n, const float *data, const Parameters &parameters) 
     }
   }
 
+  std::cerr << "Start adding dfs-tree" << std::endl;
+
   tree_grow(parameters);
 
   unsigned max = 0, min = 1e6, avg = 0;
@@ -424,6 +461,149 @@ void IndexNSG::Build(size_t n, const float *data, const Parameters &parameters) 
 
   has_built = true;
 }
+
+void IndexNSG::SearchMeasure(const float *query, const float *x, size_t K,
+                      unsigned L, std::vector<unsigned>&indices, Measure &measure) {
+  std::vector<Neighbor> retset(L + 1);
+  std::vector<unsigned> init_ids(L, -1);
+  boost::dynamic_bitset<> flags{nd_, 0};
+  // std::mt19937 rng(rand());
+  // GenRandom(rng, init_ids.data(), L, (unsigned) nd_);
+
+  unsigned tmp_l = 0;
+  for (; tmp_l < L && tmp_l < final_graph_[ep_].size(); tmp_l++) {
+    init_ids[tmp_l] = final_graph_[ep_][tmp_l];
+    flags[init_ids[tmp_l]] = true;
+  }
+
+  // while (tmp_l < L) {
+  //   unsigned id = rand() % nd_;
+  //   if (flags[id]) continue;
+  //   flags[id] = true;
+  //   init_ids[tmp_l] = id;
+  //   tmp_l++;
+  // }
+
+  for (unsigned i = 0; i < tmp_l; i++) {
+    unsigned id = init_ids[i];
+    float dist =
+        distance_->compare(x + dimension_ * id, query, (unsigned)dimension_);
+    measure.ndc++;
+    retset[i] = Neighbor(id, dist, true);
+  }
+
+  std::sort(retset.begin(), retset.begin() + tmp_l);
+  int k = 0;
+  while (k < (int)L && retset[k].id < std::numeric_limits<unsigned>::max()) {
+    int nk = L;
+
+    if (retset[k].flag) {
+      retset[k].flag = false;
+      unsigned n = retset[k].id;
+
+      for (unsigned m = 0; m < final_graph_[n].size(); ++m) {
+        unsigned id = final_graph_[n][m];
+        if (flags[id]) continue;
+        flags[id] = 1;
+        float dist =
+            distance_->compare(query, x + dimension_ * id, (unsigned)dimension_);
+        measure.ndc++;
+        if (dist >= retset[L - 1].distance) continue;
+        Neighbor nn(id, dist, true);
+        int r = InsertIntoPoolLen(retset.data(), L, nn, tmp_l);
+
+        if(r <= L && tmp_l < L) tmp_l++;  
+
+        if (r < nk) nk = r;
+      }
+    }
+    if (nk <= k)
+      k = nk;
+    else
+      ++k;
+  }
+  for (size_t i = 0; i < K; i++) {
+    indices[i] = retset[i].id;
+    assert(indices[i] >= 0);
+  }
+}
+
+
+struct CompareByFirst {
+    constexpr bool operator()(std::pair<float, int> const &a,
+                              std::pair<float, int> const &b) const noexcept {
+        return a.first < b.first;
+    }
+};
+
+void
+IndexNSG::searchmeasure(const float *query, const float *x, size_t K, size_t ef, std::vector<unsigned>&indices,Measure& measure)const  {
+            boost::dynamic_bitset<> flags{nd_, 0};
+
+            // top_candidates - the result set R
+            std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int>>> top_candidates;
+            // candidate_set  - the search set S
+            std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int>>, CompareByFirst> candidate_set;
+
+            float lowerBound;
+            // Insert the entry point to the result and search set with its exact distance as a key. 
+            {
+            float dist =distance_->compare(x + dimension_ * ep_, query, (unsigned)dimension_);
+                measure.ndc++;
+                lowerBound = dist;
+                top_candidates.emplace(dist, ep_);
+                candidate_set.emplace(-dist, ep_);
+            } 
+
+            flags[ep_] = true;
+
+
+            // Iteratively generate candidates and conduct DCOs to maintain the result set R.
+            while (!candidate_set.empty()) {
+                std::pair<float, int> current_node_pair = candidate_set.top();
+
+                // When the smallest object in S has its distance larger than the largest in R, terminate the algorithm.
+                if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef)) {
+                    break;
+                }
+                candidate_set.pop();
+                // Fetch the smallest object in S. 
+                int current_node_id = current_node_pair.second;
+
+                // Enumerate all the neighbors of the object and view them as candidates of KNNs. 
+                for (size_t j = 0; j < final_graph_[current_node_id].size(); j++) {
+                    int candidate_id = final_graph_[current_node_id][j];
+                    if (!flags[candidate_id]) {
+                        flags[candidate_id] = true;
+
+            float dist = distance_->compare(query, x + dimension_ * candidate_id, (unsigned)dimension_);
+
+                        measure.ndc++;
+                        if (top_candidates.size() < ef || lowerBound > dist) {                      
+                            candidate_set.emplace(-dist, candidate_id);
+                                top_candidates.emplace(dist, candidate_id);
+
+                            if (top_candidates.size() > ef)
+                                top_candidates.pop();
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            while(top_candidates.size() > K)
+              top_candidates.pop();
+
+            int index = indices.size() - 1;
+            while(!top_candidates.empty()){
+              indices[index--] = top_candidates.top().second;
+              top_candidates.pop();
+            }
+}
+
+
 
 void IndexNSG::Search(const float *query, const float *x, size_t K,
                       const Parameters &parameters, unsigned *indices) {
@@ -676,10 +856,12 @@ void IndexNSG::tree_grow(const Parameters &parameter) {
   unsigned unlinked_cnt = 0;
   while (unlinked_cnt < nd_) {
     DFS(flags, root, unlinked_cnt);
-    // std::cout << unlinked_cnt << '\n';
+    std::cerr << unlinked_cnt << std::endl;
+    fflush(stderr);
     if (unlinked_cnt >= nd_) break;
     findroot(flags, root, parameter);
-    // std::cout << "new root"<<":"<<root << '\n';
+    std::cerr << "new root"<<":"<<root << std::endl;
+    fflush(stderr);
   }
   for (size_t i = 0; i < nd_; ++i) {
     if (final_graph_[i].size() > width) {

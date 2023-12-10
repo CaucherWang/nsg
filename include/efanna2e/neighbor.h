@@ -10,12 +10,13 @@
 #include <cstddef>
 #include <vector>
 #include <mutex>
+#include <limits>
 
 namespace efanna2e {
 
 struct Neighbor {
-    unsigned id;
-    float distance;
+    unsigned id{std::numeric_limits<unsigned>::max()};
+    float distance{std::numeric_limits<float>::max()};
     bool flag;
 
     Neighbor() = default;
@@ -129,6 +130,38 @@ static inline int InsertIntoPool (Neighbor *addr, unsigned K, Neighbor nn) {
   return right;
 }
 
+static inline int InsertIntoPoolLen (Neighbor *addr, unsigned K, Neighbor nn, int len) {
+  // find the location to insert
+  int left=0,right=len-1;
+  if(addr[left].distance>nn.distance){
+    memmove((char *)&addr[left+1], &addr[left],K * sizeof(Neighbor));
+    addr[left] = nn;
+    return left;
+  }
+  if(addr[right].distance<nn.distance){
+    addr[K] = nn;
+    return K;
+  }
+  while(left<right-1){
+    int mid=(left+right)/2;
+    if(addr[mid].distance>nn.distance)right=mid;
+    else left=mid;
+  }
+  //check equal ID
+
+  while (left > 0){
+    if (addr[left].distance < nn.distance) break;
+    if (addr[left].id == nn.id) return K + 1;
+    left--;
+  }
+  if(addr[left].id == nn.id||addr[right].id==nn.id)return K+1;
+  memmove((char *)&addr[right+1], &addr[right],(K-right) * sizeof(Neighbor));
+  addr[right]=nn;
+  return right;
 }
+
+}
+
+
 
 #endif //EFANNA2E_GRAPH_H
